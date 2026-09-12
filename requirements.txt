@@ -1,0 +1,47 @@
+# Pinned, hash-verified runtime dependencies for the private venv that
+# bin/lightctl builds under ~/.local/share/eglo-light/venv.
+#
+# The installer runs pip with --require-hashes --only-binary=:all: --no-deps
+# --isolated, so only the exact wheels listed here can ever be installed: no
+# unpinned upgrade, no sdist build step, no transitive package the maintainer
+# has not reviewed, and no influence from the user's pip config or PIP_* env.
+# That means every transitive dependency must be listed explicitly below.
+#
+# Covered platforms: Linux x86_64 and aarch64 (manylinux), CPython 3.13 and
+# 3.14 (3.14 is the interpreter these pins were generated against; bleak and
+# pycryptodome wheels are ABI-independent, dbus-fast is not). Older CPython
+# (< 3.12) would additionally need typing-extensions and is not supported.
+#
+# To regenerate after a version bump:
+#
+#   for plat in manylinux2014_x86_64 manylinux2014_aarch64; do
+#     for py in 313 314; do
+#       pip download --only-binary=:all: --no-deps --dest wheels \
+#         --platform $plat --python-version $py --implementation cp --abi cp$py \
+#         dbus-fast==<ver> pycryptodome==<ver>
+#     done
+#   done
+#   pip download --only-binary=:all: --no-deps --dest wheels bleak==<ver>
+#   for f in wheels/*.whl; do echo "$f"; pip hash "$f"; done
+#
+# Equivalently: pip-compile --generate-hashes --allow-unsafe requirements.in
+# Then verify: python3 -m venv /tmp/v && /tmp/v/bin/pip install \
+#   --require-hashes --only-binary=:all: --no-deps -r requirements.txt
+
+bleak==3.0.2 \
+    --hash=sha256:39092feb9e83f1df5ad2f88e837723c7211c982ce9e9cda6235104bc2ebe0d0d
+    # py3-none-any (pure python)
+
+pycryptodome==3.23.0 \
+    --hash=sha256:c8987bd3307a39bc03df5c8e0e3d8be0c4c3518b7f044b0f4c15d1aa78f52575 \
+    --hash=sha256:67bd81fcbe34f43ad9422ee8fd4843c8e7198dd88dd3d40e6de42ee65fbe1490
+    # cp37-abi3 manylinux_2_17 x86_64, then aarch64
+
+# bleak's Linux backend; pulled in transitively, pinned here because the
+# installer runs with --no-deps.
+dbus-fast==5.0.22 \
+    --hash=sha256:979761985fe343c701f2b7575285d6e370123f7231d4656209ef7824bb686bbb \
+    --hash=sha256:de10ff3b3cb2acb1c09fe17158a470519000d37bb5ee5fd69c4075e81ce8dcf5 \
+    --hash=sha256:eb1d7e8e65561d0fd438004fd9e0f981c8a862912fed58dd4e29db1936c39d73 \
+    --hash=sha256:703e0f8f9af52e8e053394ee2b578042be0c3d8ea2b1488f9db8cb14393cc13f
+    # cp313 x86_64, cp313 aarch64, cp314 x86_64, cp314 aarch64 (manylinux_2_17+)

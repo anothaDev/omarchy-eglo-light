@@ -1,0 +1,64 @@
+{
+  "schemaVersion": 1,
+  "id": "anothadev.eglo-light",
+  "name": "Eglo Light",
+  "version": "0.2.0",
+  "author": "anothaDev",
+  "license": "MIT",
+  "description": "Unofficial plugin to control Eglo Connect / AwoX Bluetooth-mesh lamps from the bar: power, brightness, white warmth and colours. No app, no cloud, no hub.",
+  "kinds": [
+    "bar-widget"
+  ],
+  "entryPoints": {
+    "barWidget": "Panel.qml"
+  },
+  "barWidget": {
+    "displayName": "Eglo Light",
+    "description": "Power, brightness, warmth and colour for an Eglo Connect / AwoX lamp over Bluetooth. Open the panel once to pick your lamp. One widget, one lamp; multi-lamp support is planned.",
+    "category": "Home",
+    "allowMultiple": false,
+    "defaultSection": "right",
+    "defaults": {
+      "name": "",
+      "mac": "",
+      "meshName": "",
+      "meshPassword": "",
+      "pollIntervalSec": 20
+    },
+    "schema": [
+      {
+        "key": "name",
+        "type": "string",
+        "label": "Lamp name",
+        "defaultValue": ""
+      },
+      {
+        "key": "mac",
+        "type": "string",
+        "label": "Lamp Bluetooth address (set from the panel)",
+        "defaultValue": ""
+      },
+      {
+        "key": "meshName",
+        "type": "string",
+        "label": "Mesh name (R-XXXXXX for remote-paired lamps)",
+        "defaultValue": ""
+      },
+      {
+        "key": "meshPassword",
+        "type": "string",
+        "label": "Mesh password (1234 for remote-paired lamps)",
+        "defaultValue": ""
+      },
+      {
+        "key": "pollIntervalSec",
+        "type": "integer",
+        "label": "Background poll interval (seconds)",
+        "min": 5,
+        "max": 300,
+        "step": 5,
+        "defaultValue": 20
+      }
+    ]
+  }
+}

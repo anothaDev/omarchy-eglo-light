@@ -1,0 +1,94 @@
+#!/usr/bin/env bash
+# Launcher for the awoxlight CLI. Keeps a private venv with bleak and
+# pycryptodome under ~/.local/share/eglo-light. The first run installs the
+# dependencies in the background and reports {"installing": true} so the bar
+# widget can show progress instead of hanging. Only the exact, hash-verified
+# wheels listed in requirements.txt are ever installed.
+set -euo pipefail
+here="$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/.." && pwd)"
+data="${XDG_DATA_HOME:-$HOME/.local/share}/eglo-light"
+venv="$data/venv"
+marker="$venv/.ready"
+install_log="$data/install.log"
+
+want_json=0
+for a in "$@"; do [[ $a == "--json" ]] && want_json=1; done
+
+report() { # status message
+  if (( want_json )); then
+    printf '{"ok": false, "%s": true, "error": %s}\n' "$1" "$(printf '%s' "$2" | python3 -c 'import json,sys; print(json.dumps(sys.stdin.read()))' 2>/dev/null || printf '"%s"' "$2")"
+  else
+    echo "$2" >&2
+  fi
+}
+
+# The marker holds the "major.minor" of the interpreter the venv was built
+# with. A system Python upgrade (Arch rolls these) orphans the venv, so a
+# mismatch means "stale": drop the marker and fall through to a rebuild.
+pyver='import sys; print("%d.%d" % sys.version_info[:2])'
+if [[ -f "$marker" ]]; then
+  want_pyver="$(python3 -c "$pyver" 2>/dev/null || true)"
+  if [[ -n "$want_pyver" && "$(cat "$marker" 2>/dev/null || true)" != "$want_pyver" ]]; then
+    rm -f "$marker"
+  fi
+fi
+
+if [[ ! -f "$marker" ]]; then
+  if ! command -v python3 >/dev/null; then
+    report "failed" "python3 is not installed"; exit 1
+  fi
+  mkdir -p "$data"
+  # A failed install is sticky only for a while: keep reporting the error so
+  # the panel can show it, but expire the marker after 10 minutes so a
+  # transient failure (no network, mirror hiccup) retries by itself.
+  if [[ -f "$data/install.failed" ]]; then
+    failed_at="$(stat -c %Y "$data/install.failed" 2>/dev/null || echo 0)"
+    if (( $(date +%s) - failed_at < 600 )); then
+      # Last log line is usually the pip/venv error; strip anything that would
+      # break the quoted fallback in report().
+      detail="$(tail -n 1 "$install_log" 2>/dev/null | tr -d '"\\[:cntrl:]' || true)"
+      report "failed" "dependency install failed, see $install_log${detail:+: $detail}"; exit 1
+    fi
+    rm -f "$data/install.failed"
+  fi
+  # The lock is an flock on a regular file, not a lock *directory*: the kernel
+  # drops it when the holder dies, so an installer killed by logout, OOM or a
+  # power loss cannot leave a stale lock that wedges every later run in
+  # "installing" forever. The fd is opened only here, so it is never inherited
+  # by the exec'd python on the already-installed path below; the background
+  # installer inherits it and thereby holds the lock for its whole run.
+  exec {lockfd}>>"$data/install.lock"
+  if ! flock -n "$lockfd"; then
+    report "installing" "installing Bluetooth support"; exit 3
+  fi
+  (
+    set +e
+    trap 'rm -f "$marker.tmp"' EXIT
+    # Informational only for humans reading the file; the flock is the truth.
+    : >"$data/install.lock"
+    printf '%s pid=%s\n' "$(date -Is 2>/dev/null || date)" "$BASHPID" >&"$lockfd"
+    {
+      rm -rf "$venv"
+      python3 -m venv "$venv" &&
+        "$venv/bin/pip" install --quiet --disable-pip-version-check \
+          --require-hashes --only-binary=:all: --no-deps --no-input --isolated \
+          -r "$here/requirements.txt" &&
+        "$venv/bin/python" -c "$pyver" >"$marker.tmp" &&
+        # Flush site-packages before the marker becomes visible: a power loss
+        # right after the rename must not leave a valid marker in front of a
+        # half-written venv.
+        { sync -f "$venv" 2>/dev/null || sync; } &&
+        mv "$marker.tmp" "$marker"
+    } >"$install_log" 2>&1
+    if [[ -f "$marker" ]]; then
+      rm -f "$data/install.failed"
+    else
+      touch "$data/install.failed"
+    fi
+  ) </dev/null >/dev/null 2>&1 &
+  disown
+  report "installing" "installing Bluetooth support"; exit 3
+fi
+
+export PYTHONPATH="$here${PYTHONPATH:+:$PYTHONPATH}"
+exec "$venv/bin/python" -m awoxlight.ctl "$@"
