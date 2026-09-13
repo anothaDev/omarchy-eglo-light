@@ -249,11 +249,11 @@ the plugin folder. Nothing outside the paths listed above is touched.
 ## Test
 
 ```bash
-~/.local/share/eglo-light/venv/bin/python -m pip install pytest
-PYTHONPATH=. ~/.local/share/eglo-light/venv/bin/python -m pytest -q tests
+tests/run.sh
 ```
 
-The suite runs without a lamp or Bluetooth: protocol known-answer vectors,
+The script creates a throwaway virtualenv under `.venv/` with the pinned
+runtime dependencies plus pytest. The suite runs without a lamp or Bluetooth: protocol known-answer vectors,
 advertisement parsing, the device table, scan caps, socket shutdown bounds,
 the launcher's install recovery, and the credential paths.
 
