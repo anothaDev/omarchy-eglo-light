@@ -243,7 +243,9 @@ Panel {
     desiredPower = 1
     powerSettle.restart()
     if (s.kind === "white") { mode = "white"; temp = s.temp; runAction(["white", String(brightness), String(s.temp)]) }
-    else if (s.kind === "color") { mode = "color"; rgb = s.rgb; runAction(["color", String(s.rgb[0]), String(s.rgb[1]), String(s.rgb[2])]) }
+    // The lamp keeps separate white and colour brightness registers; send the
+    // slider's value along so the level does not jump when switching modes.
+    else if (s.kind === "color") { mode = "color"; rgb = s.rgb; runAction(["color", String(s.rgb[0]), String(s.rgb[1]), String(s.rgb[2]), String(brightness)]) }
     else runAction(["preset", String(s.value)])
   }
 
@@ -447,7 +449,7 @@ Panel {
       if (h.length !== 6) return "expected #rrggbb"
       root.rgb = [parseInt(h.substr(0, 2), 16), parseInt(h.substr(2, 2), 16), parseInt(h.substr(4, 2), 16)]
       root.mode = "color"
-      root.runAction(["color", String(root.rgb[0]), String(root.rgb[1]), String(root.rgb[2])])
+      root.runAction(["color", String(root.rgb[0]), String(root.rgb[1]), String(root.rgb[2]), String(root.brightness)])
       return "ok"
     }
     function refresh(): string { root.refresh(); return "ok" }
@@ -960,7 +962,7 @@ Panel {
           color: root.dim
           font.family: root.fontFamily
           font.pixelSize: Style.font.caption
-          elide: Text.ElideRight
+          wrapMode: Text.WordWrap
         }
       }
     }

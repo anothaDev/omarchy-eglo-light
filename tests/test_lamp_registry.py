@@ -108,13 +108,13 @@ def test_registry_is_capped_and_evicts_least_recently_requested():
         lamps = []
         for i in range(D.LAMPS_MAX):
             lamp = await d.lamp_for({"mac": "A4:C1:38:00:00:%02X" % i, "mesh_name": "R-X", "mesh_password": "1234"})
-            lamp.last_request_at = 1000.0 + i  # oldest first
+            lamp.last_request_at = float(i)  # oldest first; tiny so any real clock is newer  # oldest first
             lamps.append(lamp)
         assert len(d.lamps) == D.LAMPS_MAX
         # touch the oldest so it is no longer the eviction candidate
         again = await d.lamp_for({"mac": "A4:C1:38:00:00:00", "mesh_name": "R-X", "mesh_password": "1234"})
         assert again is lamps[0]
-        assert again.last_request_at > 1000.0
+        assert again.last_request_at > float(D.LAMPS_MAX)
 
         fresh = await d.lamp_for({"mac": MAC_B, "mesh_name": "R-X", "mesh_password": "1234"})
         assert len(d.lamps) == D.LAMPS_MAX

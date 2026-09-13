@@ -47,8 +47,11 @@ from .devices import device_info
 
 log = logging.getLogger("eglo-light")
 
-WHITE_MAX = 0x7F
-COLOR_MIN, COLOR_MAX = 0x0A, 0x64
+WHITE_MAX = 0x7F         # white brightness register: 1..127
+COLOR_MIN, COLOR_MAX = 0x0A, 0x64  # colour brightness register: a plain percent, the lamp floors it at 10
+# Both registers map to percent linearly from zero (verified on the lamp: white
+# 76/127 is shown by the lamp itself as colour 59, colour 50 comes back as
+# white 63/127). The lamp also carries the level across mode switches on its own.
 
 # Anyone in radio range can advertise thousands of fake lamps under rotating
 # addresses, so the scan path is bounded at every producer.
@@ -266,7 +269,7 @@ class Lamp:
         out.update({
             "on": st.on,
             "mode": "color" if color_mode else "white",
-            "brightness": pct(st.color_brightness, COLOR_MIN, COLOR_MAX) if color_mode else pct(st.white_brightness, 1, WHITE_MAX),
+            "brightness": pct(st.color_brightness, 0, COLOR_MAX) if color_mode else pct(st.white_brightness, 0, WHITE_MAX),
             "temp": pct(st.white_temp, 0, WHITE_MAX),
             "rgb": [st.red, st.green, st.blue],
         })
@@ -276,6 +279,11 @@ class Lamp:
     async def run(self, cmd: str, req: dict[str, Any]) -> dict[str, Any]:
         async with self.lock:
             self.last_command_at = time.monotonic()
+            # A daemon that just started has not heard the lamp yet; give the
+            # first beacons a moment instead of failing the very first command.
+            deadline = time.monotonic() + 3.0
+            while not self.seen_at and time.monotonic() - self.created_at < 8.0 and time.monotonic() < deadline:
+                await asyncio.sleep(0.1)
             if cmd == "toggle":
                 cmd = "off" if (self.state and self.state.on) else "on"
             try:
@@ -310,7 +318,7 @@ class Lamp:
         elif cmd == "brightness":
             p = float(req.get("value", 100))
             if color_mode:
-                v = unpct(p, COLOR_MIN, COLOR_MAX)
+                v = max(COLOR_MIN, unpct(p, 0, COLOR_MAX))
                 await light.set_color_brightness(v)
                 self._optimistic(color_brightness=v)
             else:
@@ -320,7 +328,12 @@ class Lamp:
         elif cmd == "temp":
             v = unpct(float(req.get("value", 50)), 0, WHITE_MAX)
             await light.set_white_temperature(v)
-            self._optimistic(mode=1, on=True, white_temp=v)
+            changes = {"mode": 1, "on": True, "white_temp": v}
+            if color_mode and st:
+                # The lamp carries the level across modes by itself (verified);
+                # mirror that so the optimistic state does not show a stale value.
+                changes["white_brightness"] = max(1, unpct(st.color_brightness, 0, WHITE_MAX))
+            self._optimistic(**changes)
         elif cmd == "white":
             b = max(1, unpct(float(req.get("brightness", 100)), 0, WHITE_MAX))
             t = unpct(float(req.get("temp", 50)), 0, WHITE_MAX)
@@ -329,9 +342,12 @@ class Lamp:
         elif cmd == "color":
             r, g, b = (max(0, min(255, int(x))) for x in req.get("rgb", [255, 255, 255]))
             await light.set_color(r, g, b)
-            self._optimistic(mode=3, on=True, red=r, green=g, blue=b)
+            changes = {"mode": 3, "on": True, "red": r, "green": g, "blue": b}
+            if not color_mode and st and "brightness" not in req:
+                changes["color_brightness"] = max(COLOR_MIN, pct(st.white_brightness, 0, WHITE_MAX))  # lamp carries the level over
+            self._optimistic(**changes)
             if "brightness" in req:
-                v = unpct(float(req["brightness"]), COLOR_MIN, COLOR_MAX)
+                v = max(COLOR_MIN, unpct(float(req["brightness"]), 0, COLOR_MAX))
                 await light.set_color_brightness(v)
                 self._optimistic(color_brightness=v)
         elif cmd == "preset":
