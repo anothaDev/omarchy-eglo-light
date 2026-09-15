@@ -15,23 +15,25 @@ class _Scanner:
         pass
 
 
-def _run(powered_sequence):
-    """Drive scan_watchdog through the given adapter power readings."""
+def _run(powered_sequence, ticks=6):
+    """Drive scan_watchdog for a few ticks; the adapter reports the readings
+    in order and then keeps repeating the last one, like a real adapter."""
     async def go():
         d = D.Daemon()
         readings = list(powered_sequence)
-        seen_flags = []
+        state = {"powered": readings[0], "calls": 0}
 
         async def fake_powered():
-            return readings.pop(0) if readings else None
+            state["calls"] += 1
+            if readings:
+                state["powered"] = readings.pop(0)
+            return state["powered"]
 
         d.adapter_powered = fake_powered
-        # start_scan without Bluetooth: substitute a fake scanner object.
-        orig_start = d.start_scan
 
-        async def fake_start():
+        async def fake_start():  # a real scan only starts on a powered adapter
             async with d.scan_lock:
-                if d.scanner is None:
+                if d.scanner is None and state["powered"]:
                     d.scanner = _Scanner()
                     d.bluetooth_ok = True
                     d.bluetooth_error = ""
@@ -43,9 +45,8 @@ def _run(powered_sequence):
         D.asyncio.sleep = quick_sleep
         try:
             task = asyncio.create_task(d.scan_watchdog())
-            while readings:
+            while state["calls"] < ticks:
                 await real_sleep(0.01)
-                seen_flags.append((d.bluetooth_ok, d.bluetooth_error, d.scanner is not None))
             d.stopping.set()
             task.cancel()
             try:
@@ -54,7 +55,7 @@ def _run(powered_sequence):
                 pass
         finally:
             D.asyncio.sleep = real_sleep
-        return d, seen_flags
+        return d, None
     return asyncio.run(go())
 
 
