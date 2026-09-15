@@ -371,6 +371,8 @@ class Daemon:
         self.beacon_ignore_until = 0.0      # BlueZ replays cached beacons on scan start
         self.bluetooth_ok = True
         self.bluetooth_error = ""
+        self.last_adv_at = 0.0
+        self._bus = None  # cached system D-Bus connection for adapter checks
         self.last_request_at = time.monotonic()
         self.started_at = time.monotonic()
         self.stopping = asyncio.Event()
@@ -378,6 +380,7 @@ class Daemon:
 
     # -- scanning ---------------------------------------------------------------
     def _on_adv(self, dev, adv):
+        self.last_adv_at = time.monotonic()  # any device: proves the scanner is alive
         st = parse_advertisement(adv.manufacturer_data)
         if not st:
             return
@@ -430,12 +433,55 @@ class Daemon:
                 log.debug("scan stop: %s", e)
             self.scanner = None
 
+    async def adapter_powered(self) -> Optional[bool]:
+        """Powered state of the first BlueZ adapter, None if BlueZ is unreachable."""
+        try:
+            from dbus_fast import BusType
+            from dbus_fast.aio import MessageBus
+            if self._bus is None or not self._bus.connected:
+                self._bus = await MessageBus(bus_type=BusType.SYSTEM).connect()
+            intro = await self._bus.introspect("org.bluez", "/")
+            om = self._bus.get_proxy_object("org.bluez", "/", intro).get_interface("org.freedesktop.DBus.ObjectManager")
+            for ifaces in (await om.call_get_managed_objects()).values():
+                adapter = ifaces.get("org.bluez.Adapter1")
+                if adapter is not None:
+                    return bool(adapter["Powered"].value)
+            return False  # BlueZ up, no adapter at all
+        except Exception as e:  # noqa: BLE001
+            log.debug("adapter check failed: %s", e)
+            return None
+
     async def scan_watchdog(self):
-        """Retry scanning while Bluetooth is down so the bar notices when it returns."""
+        """Track adapter power and keep the scanner alive.
+
+        The scanner does not fail when the adapter is switched off underneath
+        it (suspend, rfkill, the bar's Bluetooth toggle); it just goes silent.
+        So poll the adapter, report "Bluetooth is off" while it is down, and
+        restart the scan when it returns or when it has gone quiet for too long."""
         while not self.stopping.is_set():
             await asyncio.sleep(5)
-            if not self.scanner and not self.connect_lock.locked():
+            if self.connect_lock.locked():
+                continue
+            powered = await self.adapter_powered()
+            if powered is False:
+                if self.bluetooth_ok:
+                    log.info("bluetooth adapter is off")
+                self.bluetooth_ok = False
+                self.bluetooth_error = "Bluetooth is off"
+                await self.stop_scan()
+                continue
+            if powered and not self.bluetooth_ok:
+                log.info("bluetooth adapter is back, restarting scan")
+                self.bluetooth_ok = True
+                self.bluetooth_error = ""
+                await self.stop_scan()
+            quiet = self.scanner is not None and self.last_adv_at and time.monotonic() - self.last_adv_at > 60.0
+            if quiet:
+                log.info("no advertisements for 60 s, restarting scan")
+                await self.stop_scan()
+            if not self.scanner:
                 await self.start_scan()
+                self.last_adv_at = time.monotonic()
             cutoff = time.monotonic() - C.SEEN_TTL_SEC
             for mac in [m for m, d in self.seen.items() if d["seen_at"] < cutoff]:
                 del self.seen[mac]
